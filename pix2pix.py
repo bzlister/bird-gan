@@ -7,6 +7,7 @@ import time
 import datetime
 import sys
 import matplotlib.pyplot as plt
+import pytorch_ssim
 
 import torchvision.transforms as transforms
 from torchvision.utils import save_image
@@ -53,14 +54,15 @@ if __name__ == '__main__':
     device = torch.device('cuda')
     # Loss functions
     criterion_GAN = torch.nn.MSELoss()
-    criterion_pixelwise = torch.nn.L1Loss()
+    #criterion_pixelwise = torch.nn.L1Loss()
+    criterion_ssim = pytorch_ssim.SSIM()
     criterion_crossentropy = torch.nn.CrossEntropyLoss()
     criterion_hist = torch.nn.MSELoss()
 
     # Loss weight of L1 pixel-wise loss between translated image and real image
-    lambda_pixel = -1.5
-    lambda_clf = 0.2
-    lambda_hist = 0.00000007
+    lambda_pixel = -5
+    lambda_clf = 0.3
+    lambda_hist = 0.0000007
 
     # Calculate output of image discriminator (PatchGAN)
     patch = (1, opt.img_height // 2 ** 4, opt.img_width // 2 ** 4)
@@ -95,7 +97,7 @@ if __name__ == '__main__':
         discriminator = discriminator.cuda()
         criterion_crossentropy = criterion_crossentropy.cuda()
         criterion_GAN = criterion_GAN.cuda()
-        criterion_pixelwise = criterion_pixelwise.cuda()
+        criterion_pixelwise = criterion_ssim.cuda()#criterion_pixelwise.cuda()
         criterion_hist = criterion_hist.cuda()
 
         clf.load_state_dict(torch.load('model.pth'))
@@ -186,15 +188,22 @@ if __name__ == '__main__':
             pred_fake = discriminator(gan_output)
             # GAN loss
             loss_GAN = criterion_GAN(pred_fake, valid)
-            # Pixel-wise loss
-            loss_pixel = criterion_pixelwise(gan_output, input)
+
             # Classification loss
             loss_clf = criterion_crossentropy(pred_class, label)
             # Histogram loss
-            r_out, g_out, b_out = gan_output[:,0,:,:], gan_output[:,1,:,:], gan_output[:,2,:,:]
-            r_in, g_in, b_in = input[:,0,:,:], input[:,1,:,:], input[:,2,:,:]
-            loss_hist = criterion_hist(r_out.histc(), r_in.histc()).detach() + criterion_hist(g_out.histc(), g_in.histc()).detach() + criterion_hist(b_out.histc(), b_in.histc()).detach()
-
+            # For thhe component of loss responsible for forcing the generator to produce spatial transforms (currently pixelwise):
+                # Try an edge loss thing like in pyramid feature attention
+                # Read that one paper and see what they do to achieve spatial transforms
+            # SSIM seems really good for getting nice looking images - perhaps it shouldnt be used as a 'bad thing' to motivate spatial transforms?
+            # histogram color distance appears to be working correctly
+            gan_output_std = gan_output*0.5 + 0.5
+            input_std = input*0.5 + 0.5
+            r_out, g_out, b_out = gan_output_std[:,0,:,:], gan_output_std[:,1,:,:], gan_output_std[:,2,:,:]
+            r_in, g_in, b_in = input_std[:,0,:,:], input_std[:,1,:,:], input_std[:,2,:,:]
+            # Pixel-wise loss
+            loss_pixel = criterion_pixelwise((0.299*r_out + 0.587*g_out + 0.114*b_out).reshape(-1,1,256,256), (0.299*r_in + 0.587*g_in + 0.114*b_in).reshape(-1,1,256,256))**2
+            loss_hist = criterion_hist(r_out.histc(bins=256), r_in.histc(bins=256)).detach() + criterion_hist(g_out.histc(bins=256), g_in.histc(bins=256)).detach() + criterion_hist(b_out.histc(bins=256), b_in.histc(bins=256)).detach()
             # Total loss
             loss_G = loss_GAN + lambda_pixel * loss_pixel + lambda_clf * loss_clf + lambda_hist * loss_hist
 
