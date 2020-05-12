@@ -55,10 +55,12 @@ if __name__ == '__main__':
     criterion_GAN = torch.nn.MSELoss()
     criterion_pixelwise = torch.nn.L1Loss()
     criterion_crossentropy = torch.nn.CrossEntropyLoss()
+    criterion_hist = torch.nn.MSELoss()
 
     # Loss weight of L1 pixel-wise loss between translated image and real image
-    lambda_pixel = -0.5
-    lambda_clf = 300
+    lambda_pixel = -1.5
+    lambda_clf = 0.2
+    lambda_hist = 0.00000007
 
     # Calculate output of image discriminator (PatchGAN)
     patch = (1, opt.img_height // 2 ** 4, opt.img_width // 2 ** 4)
@@ -94,6 +96,7 @@ if __name__ == '__main__':
         criterion_crossentropy = criterion_crossentropy.cuda()
         criterion_GAN = criterion_GAN.cuda()
         criterion_pixelwise = criterion_pixelwise.cuda()
+        criterion_hist = criterion_hist.cuda()
 
         clf.load_state_dict(torch.load('model.pth'))
         clf.to(torch.device("cuda"))
@@ -177,24 +180,25 @@ if __name__ == '__main__':
 
 
             gan_output = generator(input)
-            '''
-            gan_output_cuda = gan_output.cuda()
-            pred_class = clf(gan_output_cuda).to('cpu')
-            '''
+
             pred_class = clf(gan_output.to(device))
 
-            pred_fake = discriminator(gan_output, input)
+            pred_fake = discriminator(gan_output)
             # GAN loss
             loss_GAN = criterion_GAN(pred_fake, valid)
             # Pixel-wise loss
             loss_pixel = criterion_pixelwise(gan_output, input)
             # Classification loss
             loss_clf = criterion_crossentropy(pred_class, label)
+            # Histogram loss
+            r_out, g_out, b_out = gan_output[:,0,:,:], gan_output[:,1,:,:], gan_output[:,2,:,:]
+            r_in, g_in, b_in = input[:,0,:,:], input[:,1,:,:], input[:,2,:,:]
+            loss_hist = criterion_hist(r_out.histc(), r_in.histc()).detach() + criterion_hist(g_out.histc(), g_in.histc()).detach() + criterion_hist(b_out.histc(), b_in.histc()).detach()
 
             # Total loss
-            loss_G = loss_GAN + lambda_pixel * loss_pixel + lambda_clf * loss_clf
+            loss_G = loss_GAN + lambda_pixel * loss_pixel + lambda_clf * loss_clf + lambda_hist * loss_hist
 
-            loss_G.backward(retain_graph=True)
+            loss_G.backward()
 
             optimizer_G.step()
 
@@ -205,12 +209,12 @@ if __name__ == '__main__':
             optimizer_D.zero_grad()
 
             # Real loss
-            #pred_real = discriminator(, real_A)
-            #loss_real = criterion_GAN(pred_real, valid)
+            pred_real = discriminator(input)
+            loss_real = criterion_GAN(pred_real, valid)
 
             # Fake loss
-            loss_fake = criterion_GAN(pred_fake, fake)
-            loss_D = loss_fake
+            loss_fake = criterion_GAN(discriminator(gan_output.detach()), fake)
+            loss_D = 0.5*(loss_fake + loss_real)
             loss_D.backward()
             optimizer_D.step()
 
@@ -223,10 +227,9 @@ if __name__ == '__main__':
             batches_left = opt.n_epochs * len(dataloader) - batches_done
             time_left = datetime.timedelta(seconds=batches_left * (time.time() - prev_time))
             prev_time = time.time()
-
             # Print log
             sys.stdout.write(
-                "\r[Epoch %d/%d] [Batch %d/%d] [D loss: %f] [G loss: %f, pixel: %f, adv: %f] ETA: %s"
+                "\r[Epoch %d/%d] [Batch %d/%d] [D loss: %f] [G loss: %f, pixel: %f, clf: %f, hist: %f, adv: %f] ETA: %s"
                 % (
                     epoch,
                     opt.n_epochs,
@@ -234,7 +237,9 @@ if __name__ == '__main__':
                     len(dataloader),
                     loss_D.item(),
                     loss_G.item(),
-                    loss_pixel.item(),
+                    loss_pixel.item()*lambda_pixel,
+                    loss_clf.item()*lambda_clf,
+                    loss_hist.item()*lambda_hist,
                     loss_GAN.item(),
                     time_left,
                 )

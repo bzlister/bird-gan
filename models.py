@@ -119,7 +119,7 @@ class Discriminator(nn.Module):
             return layers
 
         self.model = nn.Sequential(
-            *discriminator_block(in_channels * 2, 64, normalization=False),
+            *discriminator_block(in_channels, 64, normalization=False),
             *discriminator_block(64, 128),
             *discriminator_block(128, 256),
             *discriminator_block(256, 512),
@@ -127,7 +127,5 @@ class Discriminator(nn.Module):
             nn.Conv2d(512, 1, 4, padding=1, bias=False)
         )
 
-    def forward(self, img_A, img_B):
-        # Concatenate image and condition image by channels to produce input
-        img_input = torch.cat((img_A, img_B), 1)
-        return self.model(img_input)
+    def forward(self, img):
+        return self.model(img)
