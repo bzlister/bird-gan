@@ -35,7 +35,7 @@ if __name__ == '__main__':
     parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
     parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
     parser.add_argument("--decay_epoch", type=int, default=100, help="epoch from which to start lr decay")
-    parser.add_argument("--n_cpu", type=int, default=8, help="number of cpu threads to use during batch generation")
+    parser.add_argument("--n_cpu", type=int, default=1, help="number of cpu threads to use during batch generation")
     parser.add_argument("--img_height", type=int, default=256, help="size of image height")
     parser.add_argument("--img_width", type=int, default=256, help="size of image width")
     parser.add_argument("--channels", type=int, default=3, help="number of image channels")
@@ -49,16 +49,16 @@ if __name__ == '__main__':
     os.makedirs("images/%s" % opt.dataset_name, exist_ok=True)
     os.makedirs("saved_models/%s" % opt.dataset_name, exist_ok=True)
 
-    cuda = False#True if torch.cuda.is_available() else False
-
+    cuda = True if torch.cuda.is_available() else False
+    device = torch.device('cuda')
     # Loss functions
     criterion_GAN = torch.nn.MSELoss()
     criterion_pixelwise = torch.nn.L1Loss()
     criterion_crossentropy = torch.nn.CrossEntropyLoss()
 
     # Loss weight of L1 pixel-wise loss between translated image and real image
-    lambda_pixel = -10
-    lambda_clf = 100
+    lambda_pixel = -0.5
+    lambda_clf = 300
 
     # Calculate output of image discriminator (PatchGAN)
     patch = (1, opt.img_height // 2 ** 4, opt.img_width // 2 ** 4)
@@ -66,7 +66,7 @@ if __name__ == '__main__':
     # Initialize generator and discriminator
     generator = GeneratorUNet()
     discriminator = Discriminator()
-    path = Path('C:/Users/bzlis/Documents/CS 747/final project/data/birds/')
+    path = Path('C:/Users/bzlis/Documents/CS 747/bird-gan/data/birds/')
     path.ls()
     # Create the data using fastai's Datablock API
     src = (ImageList.from_folder(path)
@@ -95,7 +95,7 @@ if __name__ == '__main__':
         criterion_GAN = criterion_GAN.cuda()
         criterion_pixelwise = criterion_pixelwise.cuda()
 
-        clf.load_state_dict(torch.load('model.pth', map_location="cuda:0"))
+        clf.load_state_dict(torch.load('model.pth'))
         clf.to(torch.device("cuda"))
         print("Models on GPU")
     else:
@@ -134,7 +134,7 @@ if __name__ == '__main__':
 
     val_dataloader = DataLoader(
         BirdDataset("data/%s" % opt.dataset_name, transforms_=transforms_, mode="val"),
-        batch_size=10,
+        batch_size=1,
         shuffle=True,
         num_workers=1,
     )
@@ -163,7 +163,7 @@ if __name__ == '__main__':
 
             # Model inputs
             input = Variable(batch["img"].type(Tensor))
-            label = batch["label"]
+            label = batch["label"].to(device)
 
             # Adversarial ground truths
             valid = Variable(Tensor(np.ones((input.size(0), *patch))), requires_grad=False)
@@ -177,8 +177,11 @@ if __name__ == '__main__':
 
 
             gan_output = generator(input)
+            '''
             gan_output_cuda = gan_output.cuda()
             pred_class = clf(gan_output_cuda).to('cpu')
+            '''
+            pred_class = clf(gan_output.to(device))
 
             pred_fake = discriminator(gan_output, input)
             # GAN loss
