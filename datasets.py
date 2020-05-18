@@ -22,7 +22,8 @@ class BirdDataset(Dataset):
     def __getitem__(self, index):
         img = Image.open(self.files[index % len(self.files)])
         img  = self.transform(img)
-        return {"img": img, "label": self.classes.index(re.search('([A-Z ]+)', 'data/birds\train\BLACK THROATED WARBLER\004.jpg').group(0))}
+        label = self.classes.index(re.search('([A-Z- ]+)', self.files[index % len(self.files)]).group(0))
+        return {"img": img, "label": label}
 
     def __len__(self):
         return len(self.files)
